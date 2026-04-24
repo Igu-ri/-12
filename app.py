@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import openpyxl
 import io, tempfile, re
+from openpyxl.styles import PatternFill # 엑셀 헤더 노란색으로 칠하기
 
 st.set_page_config(page_title="더존 전표 변환기", page_icon="📊", layout="wide")
 st.title("📊 더존 위하고 전표 변환기")
@@ -218,13 +219,27 @@ def create_excel(rows):
     wb = openpyxl.Workbook()
     ws = wb.active
 
-    ws.append([
+    header = [
         "1.월","2.일","3.구분",
         "4.계정과목코드","5.계정과목명",
         "6.거래처코드","7.거래처명",
         "8.적요명","9.차변(출금)","10.대변(입금)"
-    ])
+    ]
 
+    ws.append(header)
+
+    # 🔥 노란색 스타일
+    yellow_fill = PatternFill(
+        start_color="FFF59D",  # 연노랑
+        end_color="FFF59D",
+        fill_type="solid"
+    )
+
+    # 헤더 스타일 적용
+    for col in range(1, len(header) + 1):
+        ws.cell(row=1, column=col).fill = yellow_fill
+
+    # 데이터 입력
     for r in rows:
         ws.append(r)
 
@@ -232,7 +247,6 @@ def create_excel(rows):
     wb.save(bio)
     bio.seek(0)
     return bio
-
 
 # ─────────────────────────────
 # UI
