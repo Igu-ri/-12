@@ -105,13 +105,13 @@ def parse_hantoo_sheet(df):
                 if k in str(c):
                     return c
         return None
-
-    c_date  = find_col(["거래일","거래일자", "일자", "날짜"])
-    c_type  = find_col(["구분", "적요명","내용"])
-    c_stock = find_col(["종목","종목명(거래상대명)"])
+    
+    c_date  = find_col(["거래일","거래일자","일자","날짜"])
+    c_type  = find_col(["구분","적요명","내용","거래종류"])
+    c_stock = find_col(["종목","종목명","종목명(거래상대명)"])
     c_qty   = find_col(["수량"])
-    c_price = find_col(["단가", "가격"])
-    c_net   = find_col(["금액"])
+    c_price = find_col(["단가","가격"])
+    c_net   = find_col(["금액","거래금액","입출금액"])
 
     trades = []
 
