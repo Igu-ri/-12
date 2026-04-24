@@ -51,8 +51,17 @@ def normalize_trade_type(ttype):
         return "BUY"
     elif "예탁금" in ttype or "예탁금이용료" in ttype:
         return "INTEREST"
-    elif "입고" in ttype:
+    elif "입고" in ttype or "공모주입고" in ttype:
         return "StockCredit"
+    elif "입금" in ttype or "이체입금" in ttype:
+        return "Credit"
+    elif "출금" in ttype and (
+                              "은행이체" in ttype or
+                              "타사이체" in ttype or
+                              "이체출금" in ttype
+                             ):
+        return "Debit"
+        
     return None
 
 # ─────────────────────────────
@@ -185,7 +194,21 @@ def process_trades(trades):
             memo = f"{stock}({qty}주*{price})입고"
 
             rows.append(row(m,d,"차변",10700,"단기매매증권","",stock,memo,cost,0))
-            rows.append(row(m,d,"대변",13100,"선급금","","",memo,0,cost))
+            rows.append(row(m,d,"대변",13100,"선급금","",stock,memo,0,cost))
+    
+        # 이체입금
+        elif ttype == "Credit":
+            memo = f"이체입금"
+
+            rows.append(row(m,d,"차변",12500,"예치금","",stock,memo,net,0))
+            rows.append(row(m,d,"대변",12500,"예치금","","미등록거래처",memo,0,net))
+    
+        # 이체출금
+        elif ttype == "Debit":
+            memo = f"이체출금"
+
+            rows.append(row(m,d,"차변",12500,"예치금","","미등록거래처",memo,0,net))
+            rows.append(row(m,d,"대변",12500,"예치금","",stock,memo,net,0))
     return rows
 
 # ─────────────────────────────
