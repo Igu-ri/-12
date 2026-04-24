@@ -49,6 +49,8 @@ def normalize_trade_type(ttype):
         return "SELL"
     elif "매수" in ttype:
         return "BUY"
+    elif "예탁금" in ttype or "이자" in ttype:
+        return "INTEREST"
     return None
 
 # ─────────────────────────────
@@ -157,7 +159,7 @@ def process_trades(trades):
         if ttype == "SELL":
             memo = f"{stock}({qty}주*{price})매도"
 
-            rows.append(row(m,d,"차변",12500,"예치금","",stock,memo,net,0))
+            rows.append(row(m,d,"차변",12500,"예치금","","",memo,net,0))
             rows.append(row(m,d,"대변",10700,"단기매매증권","",stock,memo,0,qty*price))
 
         # 매수
@@ -166,8 +168,14 @@ def process_trades(trades):
             memo = f"{stock}({qty}주*{price})매수"
 
             rows.append(row(m,d,"차변",10700,"단기매매증권","",stock,memo,cost,0))
-            rows.append(row(m,d,"대변",12500,"예치금","",stock,memo,0,cost))
+            rows.append(row(m,d,"대변",12500,"예치금","","",memo,0,cost))
 
+        # 예탁금이용료
+        elif ttype == "INTEREST":
+            memo = "예탁금이용료"
+        
+            rows.append(row(m,d,"차변",12500,"예치금","","",memo,net,0))
+            rows.append(row(m,d,"대변",42000,"이자수익(금융)","",stock,memo,0,net))
     return rows
 
 # ─────────────────────────────
