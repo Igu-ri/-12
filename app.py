@@ -83,7 +83,7 @@ def parse_hantoo_sheet(df):
 
     c_date  = find_col(["거래일","거래일자", "일자", "날짜"])
     c_type  = find_col(["구분", "적요명","내용"])
-    c_stock = find_col(["종목","종목명(거래상대명)", "상품"])
+    c_stock = find_col(["종목","종목명(거래상대명)"])
     c_qty   = find_col(["수량"])
     c_price = find_col(["단가", "가격"])
     c_net   = find_col(["금액"])
@@ -139,7 +139,7 @@ def process_trades(trades):
 
         # 매도
         if "매도" in ttype:
-            memo = f"{stock} 매도"
+            memo = f"{stock}({qty}*{price})매도"
 
             rows.append(row(m,d,"차변",12500,"예치금","",stock,memo,net,0))
             rows.append(row(m,d,"대변",10700,"단기매매증권","",stock,memo,0,qty*price))
