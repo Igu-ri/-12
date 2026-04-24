@@ -8,7 +8,7 @@ st.title("📊 더존 위하고 전표 변환기")
 
 
 # ─────────────────────────────
-# 기본 유틸
+# 숫자 변환
 # ─────────────────────────────
 def to_int(v):
     try:
@@ -41,53 +41,7 @@ def parse_date(v):
 
 
 # ─────────────────────────────
-# 🔥 헤더 탐지
-# ─────────────────────────────
-def find_header_row(df):
-    keywords = ["일자", "거래일", "구분", "종목", "수량", "거래대금"]
-
-    for i in range(min(30, len(df))):
-        row = df.iloc[i].astype(str)
-
-        match_count = sum(
-            any(k in str(cell) for k in keywords)
-            for cell in row
-        )
-
-        if match_count >= 2:
-            return i
-
-    return None
-
-
-# ─────────────────────────────
-# 🔥 2줄 데이터 merge
-# ─────────────────────────────
-def merge_two_rows(df):
-    merged = []
-
-    i = 0
-    while i < len(df):
-        r1 = df.iloc[i].tolist()
-        r2 = df.iloc[i+1].tolist() if i+1 < len(df) else None
-
-        # 날짜 있는 줄 = 거래 시작
-        if str(r1[0]).count(".") == 2:
-            if r2 is not None:
-                for j in range(len(r1)):
-                    if (r1[j] == "" or pd.isna(r1[j])) and pd.notna(r2[j]):
-                        r1[j] = r2[j]
-
-            merged.append(r1)
-            i += 2
-        else:
-            i += 1
-
-    return pd.DataFrame(merged, columns=df.columns)
-
-
-# ─────────────────────────────
-# row 생성
+# row
 # ─────────────────────────────
 def row(m, d, div, acct_code, acct_name, cp_code, cp_name, memo, dr, cr):
     return [
@@ -103,18 +57,23 @@ def row(m, d, div, acct_code, acct_name, cp_code, cp_name, memo, dr, cr):
 
 
 # ─────────────────────────────
-# 파서
+# HANTOO 파서 (원본 구조)
 # ─────────────────────────────
 def parse_hantoo_sheet(df):
-    header_row = find_header_row(df)
+    header_row = None
+
+    for i in range(min(15, len(df))):
+        row_str = df.iloc[i].astype(str)
+
+        if any("거래일" in str(v) for v in row_str):
+            header_row = i
+            break
 
     if header_row is None:
         return []
 
-    df = df.iloc[header_row:].reset_index(drop=True)
-
-    df.columns = df.iloc[0]
-    df = df.iloc[1:].reset_index(drop=True)
+    df.columns = df.iloc[header_row]
+    df = df.iloc[header_row + 1:].reset_index(drop=True)
 
     def find_col(keys):
         for c in df.columns:
@@ -123,11 +82,11 @@ def parse_hantoo_sheet(df):
                     return c
         return None
 
-    c_date  = find_col(["거래일","거래일자","일자","날짜"])
-    c_type  = find_col(["구분","적요명","내용"])
+    c_date  = find_col(["거래일","거래일자", "일자", "날짜"])
+    c_type  = find_col(["구분", "적요명","내용"])
     c_stock = find_col(["종목","종목명(거래상대명)"])
     c_qty   = find_col(["수량"])
-    c_price = find_col(["단가","가격"])
+    c_price = find_col(["단가", "가격"])
     c_net   = find_col(["금액"])
 
     trades = []
@@ -165,7 +124,7 @@ def parse_hantoo_sheet(df):
 
 
 # ─────────────────────────────
-# 전표 생성
+# 전표 생성 (원본 유지 + 예탁금만 추가 유지)
 # ─────────────────────────────
 def process_trades(trades):
     rows = []
@@ -173,11 +132,11 @@ def process_trades(trades):
     for t in trades:
         m = t["month"]
         d = t["day"]
+        ttype = t["type"]
         stock = t["stock"]
         qty = t["qty"]
         price = t["price"]
         net = t["net"]
-        ttype = t["type"]
 
         # 매도
         if "매도" in ttype:
@@ -194,7 +153,7 @@ def process_trades(trades):
             rows.append(row(m,d,"차변",10700,"단기매매증권","",stock,memo,cost,0))
             rows.append(row(m,d,"대변",12500,"예치금","",stock,memo,0,cost))
 
-        # 예탁금이용료
+        # 예탁금이용료 (이건 유지)
         elif "예탁금이용료" in ttype or "이용료" in ttype:
             memo = "예탁금이용료"
 
@@ -228,7 +187,7 @@ def create_excel(rows):
 
 
 # ─────────────────────────────
-# UI
+# UI (원본 유지)
 # ─────────────────────────────
 uploaded = st.file_uploader("엑셀 업로드", type=["xlsx"])
 
@@ -245,9 +204,6 @@ if uploaded:
 
         for sheet in xl.sheet_names:
             df = pd.read_excel(xl, sheet_name=sheet, header=None)
-
-            df = merge_two_rows(df)   # 🔥 핵심 추가
-
             trades = parse_hantoo_sheet(df)
             all_trades.extend(trades)
 
