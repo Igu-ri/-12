@@ -38,10 +38,25 @@ def parse_date(v):
         return d.month, d.day
     except:
         return None, None
+        
+# ─────────────────────────────
+# 🔥 거래유형 정규화 (핵심 추가)
+# ─────────────────────────────
+def normalize_trade_type(ttype):
+    ttype = str(ttype)
 
+    if "매도" in ttype:
+        return "SELL"
+    elif "매수" in ttype:
+        return "BUY"
+    elif "예탁금" in ttype or "예탁금이용료" in ttype:
+        return "INTEREST"
+    elif "입고" in ttype:
+        return "StockCredit"
+    return None
 
 # ─────────────────────────────
-# row
+# row (엑셀 10컬럼 기준)
 # ─────────────────────────────
 def row(m, d, div, acct_code, acct_name, cp_code, cp_name, memo, dr, cr):
     return [
@@ -57,15 +72,14 @@ def row(m, d, div, acct_code, acct_name, cp_code, cp_name, memo, dr, cr):
 
 
 # ─────────────────────────────
-# HANTOO 파서 (원본 구조)
+# HANTOO 파서 (자동 컬럼 매칭)
 # ─────────────────────────────
 def parse_hantoo_sheet(df):
     header_row = None
 
     for i in range(min(15, len(df))):
         row_str = df.iloc[i].astype(str)
-
-        if any("거래일" in str(v) for v in row_str):
+        if any("거래일" in str(v or "") for v in row_str): # v = 엑셀 한 셀 값 (문자/숫자/NaN 다 들어옴)
             header_row = i
             break
 
@@ -124,7 +138,7 @@ def parse_hantoo_sheet(df):
 
 
 # ─────────────────────────────
-# 전표 생성 (원본 유지 + 예탁금만 추가 유지)
+# 전표 생성
 # ─────────────────────────────
 def process_trades(trades):
     rows = []
@@ -132,36 +146,47 @@ def process_trades(trades):
     for t in trades:
         m = t["month"]
         d = t["day"]
-        ttype = t["type"]
         stock = t["stock"]
         qty = t["qty"]
         price = t["price"]
         net = t["net"]
 
+        # 🔥 정규화 적용
+        ttype = normalize_trade_type(t["type"])
+
+        if not ttype:
+            continue
+
         # 매도
-        if "매도" in ttype:
+        if ttype == "SELL":
             memo = f"{stock}({qty}주*{price})매도"
 
-            rows.append(row(m,d,"차변",12500,"예치금","",stock,memo,net,0))
+            rows.append(row(m,d,"차변",12500,"예치금","","",memo,net,0))
             rows.append(row(m,d,"대변",10700,"단기매매증권","",stock,memo,0,qty*price))
 
         # 매수
-        elif "매수" in ttype:
+        elif ttype == "BUY":
             cost = qty * price
             memo = f"{stock}({qty}주*{price})매수"
 
             rows.append(row(m,d,"차변",10700,"단기매매증권","",stock,memo,cost,0))
-            rows.append(row(m,d,"대변",12500,"예치금","",stock,memo,0,cost))
+            rows.append(row(m,d,"대변",12500,"예치금","","",memo,0,cost))
 
-        # 예탁금이용료 (이건 유지)
-        elif "예탁금이용료" in ttype or "이용료" in ttype:
+        # 예탁금이용료
+        elif ttype == "INTEREST":
             memo = "예탁금이용료"
-
-            rows.append(row(m,d,"차변",12500,"예치금","",stock,memo,net,0))
+        
+            rows.append(row(m,d,"차변",12500,"예치금","","",memo,net,0))
             rows.append(row(m,d,"대변",42000,"이자수익(금융)","",stock,memo,0,net))
 
-    return rows
+        # 공모주입고
+        elif ttype == "StockCredit":
+            cost = qty * price
+            memo = f"{stock}({qty}주*{price})입고"
 
+            rows.append(row(m,d,"차변",10700,"단기매매증권","",stock,memo,cost,0))
+            rows.append(row(m,d,"대변",13100,"선급금","","",memo,0,cost))
+    return rows
 
 # ─────────────────────────────
 # Excel 생성
@@ -187,7 +212,7 @@ def create_excel(rows):
 
 
 # ─────────────────────────────
-# UI (원본 유지)
+# UI
 # ─────────────────────────────
 uploaded = st.file_uploader("엑셀 업로드", type=["xlsx"])
 
