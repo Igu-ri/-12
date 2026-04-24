@@ -75,7 +75,7 @@ def parse_hantoo_sheet(df):
 
     for i in range(min(15, len(df))):
         row_str = df.iloc[i].astype(str)
-        if any("거래일" in v for v in row_str):
+        if any("거래일" in str(v or "") for v in row_str): # v = 엑셀 한 셀 값 (문자/숫자/NaN 다 들어옴)
             header_row = i
             break
 
