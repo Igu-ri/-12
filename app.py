@@ -38,7 +38,18 @@ def parse_date(v):
         return d.month, d.day
     except:
         return None, None
+        
+# ─────────────────────────────
+# 🔥 거래유형 정규화 (핵심 추가)
+# ─────────────────────────────
+def normalize_trade_type(ttype):
+    ttype = str(ttype)
 
+    if "매도" in ttype:
+        return "SELL"
+    elif "매수" in ttype:
+        return "BUY"
+    return None
 
 # ─────────────────────────────
 # row (엑셀 10컬럼 기준)
@@ -131,29 +142,33 @@ def process_trades(trades):
     for t in trades:
         m = t["month"]
         d = t["day"]
-        ttype = t["type"]
         stock = t["stock"]
         qty = t["qty"]
         price = t["price"]
         net = t["net"]
 
+        # 🔥 정규화 적용
+        ttype = normalize_trade_type(t["type"])
+
+        if not ttype:
+            continue
+
         # 매도
-        if "매도" in ttype:
-            memo = f"{stock}({qty}*{price})매도"
+        if ttype == "SELL":
+            memo = f"{stock}({qty}주*{price})매도"
 
             rows.append(row(m,d,"차변",12500,"예치금","",stock,memo,net,0))
             rows.append(row(m,d,"대변",10700,"단기매매증권","",stock,memo,0,qty*price))
 
         # 매수
-        elif "매수" in ttype:
+        elif ttype == "BUY":
             cost = qty * price
-            memo = f"{stock} 매수"
+            memo = f"{stock}({qty}주*{price})매수"
 
             rows.append(row(m,d,"차변",10700,"단기매매증권","",stock,memo,cost,0))
             rows.append(row(m,d,"대변",12500,"예치금","",stock,memo,0,cost))
 
     return rows
-
 
 # ─────────────────────────────
 # Excel 생성
