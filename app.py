@@ -87,35 +87,59 @@ def row(m, d, div, acct_code, acct_name, cp_code, cp_name, memo, dr, cr):
 def parse_hantoo_sheet(df):
     header_row = None
 
+    # ─────────────────────────────
+    # 헤더 위치 찾기
+    # ─────────────────────────────
     for i in range(min(15, len(df))):
         row_str = df.iloc[i].astype(str)
-        if any("거래일" in str(v or "") for v in row_str): # v = 엑셀 한 셀 값 (문자/숫자/NaN 다 들어옴)
+        if any("거래일" in str(v or "") for v in row_str):
             header_row = i
             break
 
     if header_row is None:
         return []
 
-    df.columns = df.iloc[header_row]
-    df = df.iloc[header_row + 1:].reset_index(drop=True)
+    # ─────────────────────────────
+    # 🔥 멀티 헤더 처리 (2~3줄)
+    # ─────────────────────────────
+    header_rows = df.iloc[header_row:header_row+3].fillna("")
 
+    new_cols = []
+    for col in range(df.shape[1]):
+        parts = []
+        for row_i in range(len(header_rows)):
+            val = str(header_rows.iloc[row_i, col]).strip()
+            if val and val != "nan":
+                parts.append(val)
+        new_cols.append("_".join(parts))
+
+    df.columns = new_cols
+
+    # 실제 데이터 시작
+    df = df.iloc[header_row + len(header_rows):].reset_index(drop=True)
+
+    # ─────────────────────────────
+    # 컬럼 찾기
+    # ─────────────────────────────
     def find_col(keys):
         for c in df.columns:
             for k in keys:
                 if k in str(c):
                     return c
         return None
-    
-    c_date  = find_col(["거래일","거래일자","일자","날짜"])
-    c_type  = find_col(["구분","적요명","내용","거래종류","거래명"])
-    c_stock = find_col(["종목","종목명","종목명(거래상대명)"])
-    c_qty   = find_col(["수량","거래수량"])
-    c_price = find_col(["단가","거래단가","가격"])
-    c_net   = find_col(["금액","거래금액","입출금액"])
-    c_fee   = find_col(["수수료"])
-    c_tax   = find_col(["제세금","세금"])
+
+    c_date   = find_col(["거래일","거래일자","일자","날짜"])
+    c_type   = find_col(["구분","적요명","내용","거래종류","거래명"])
+    c_stock  = find_col(["종목","종목명"])
+    c_qty    = find_col(["수량","거래수량"])
+    c_price  = find_col(["단가","거래단가","가격"])
+
+    # 🔥 금액 계열 분리
     c_amount = find_col(["정산금액"])
-    
+    c_net    = find_col(["입출금액","거래금액","금액"])
+    c_fee    = find_col(["수수료"])
+    c_tax    = find_col(["제세금","세금"])
+
     trades = []
 
     for _, r in df.iterrows():
@@ -125,14 +149,26 @@ def parse_hantoo_sheet(df):
                 continue
 
             trade_type = clean(r.get(c_type))
-            stock = clean(r.get(c_stock))
-
-            qty = to_int(r.get(c_qty))
-            price = to_int(r.get(c_price))
-            net = to_int(r.get(c_net))
-
             if not trade_type:
                 continue
+
+            stock = clean(r.get(c_stock))
+
+            qty   = to_int(r.get(c_qty))
+            price = to_int(r.get(c_price))
+
+            amount = to_int(r.get(c_amount))
+            net    = to_int(r.get(c_net))
+            fee    = to_int(r.get(c_fee))
+            tax    = to_int(r.get(c_tax))
+
+            # 🔥 금액 계산 로직
+            if amount:
+                final_net = amount
+            elif net:
+                final_net = net
+            else:
+                final_net = (qty * price) - fee - tax
 
             trades.append({
                 "month": m,
@@ -141,7 +177,7 @@ def parse_hantoo_sheet(df):
                 "stock": stock,
                 "qty": qty,
                 "price": price,
-                "net": net
+                "net": final_net
             })
 
         except:
