@@ -241,24 +241,44 @@ def process_trades(trades):
     rows = []
 
     for t in trades:
+
         m = t["month"]
         d = t["day"]
         stock = t["stock"]
         qty = t["qty"]
         price = t["price"]
-        net = t["net"]
 
-        # 🔥 정규화 적용
+        fee = t["fee"]
+        tax = t["tax"]
+
         ttype = normalize_trade_type(t["type"])
-
         if not ttype:
             continue
+
+        # ─────────────────────────────
+        # 🔥 금액 결정 (핵심)
+        # ─────────────────────────────
+        if ttype in ["BUY", "SELL"]:
+            amount = t["net"]          # 거래금액
+
+        elif ttype in ["Credit", "Debit"]:
+            amount = t["cash_amount"]  # 입출금액
+
+        elif ttype == "INTEREST":
+            amount = t["settle_amount"] # 정산금액
+
+        else:
+            amount = t["net"] or t["settle_amount"] or 0
+
+        # ─────────────────────────────
+        # 전표 생성
+        # ─────────────────────────────
 
         # 매도
         if ttype == "SELL":
             memo = f"{stock}({qty}주*{price})매도"
 
-            rows.append(row(m,d,"차변",12500,"예치금","","",memo,net,0))
+            rows.append(row(m,d,"차변",12500,"예치금","","",memo,amount,0))
             rows.append(row(m,d,"대변",10700,"단기매매증권","",stock,memo,0,qty*price))
 
         # 매수
@@ -272,9 +292,9 @@ def process_trades(trades):
         # 예탁금이용료
         elif ttype == "INTEREST":
             memo = "예탁금이용료"
-        
-            rows.append(row(m,d,"차변",12500,"예치금","","",memo,net,0))
-            rows.append(row(m,d,"대변",42000,"이자수익(금융)","",stock,memo,0,net))
+
+            rows.append(row(m,d,"차변",12500,"예치금","","",memo,amount,0))
+            rows.append(row(m,d,"대변",42000,"이자수익(금융)","",stock,memo,0,amount))
 
         # 공모주입고
         elif ttype == "StockCredit":
@@ -283,20 +303,21 @@ def process_trades(trades):
 
             rows.append(row(m,d,"차변",10700,"단기매매증권","",stock,memo,cost,0))
             rows.append(row(m,d,"대변",13100,"선급금","",stock,memo,0,cost))
-    
+
         # 이체입금
         elif ttype == "Credit":
-            memo = f"이체입금"
+            memo = "이체입금"
 
-            rows.append(row(m,d,"차변",12500,"예치금","",stock,memo,net,0))
-            rows.append(row(m,d,"대변",12500,"예치금","","미등록거래처",memo,0,net))
-    
+            rows.append(row(m,d,"차변",12500,"예치금","",stock,memo,amount,0))
+            rows.append(row(m,d,"대변",12500,"예치금","","미등록거래처",memo,0,amount))
+
         # 이체출금
         elif ttype == "Debit":
-            memo = f"이체출금"
+            memo = "이체출금"
 
-            rows.append(row(m,d,"차변",12500,"예치금","","미등록거래처",memo,0,net))
-            rows.append(row(m,d,"대변",12500,"예치금","",stock,memo,net,0))
+            rows.append(row(m,d,"차변",12500,"예치금","","미등록거래처",memo,0,amount))
+            rows.append(row(m,d,"대변",12500,"예치금","",stock,memo,amount,0))
+
     return rows
 
 # ─────────────────────────────
