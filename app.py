@@ -219,14 +219,22 @@ def parse_hantoo_sheet(df):
                 final_net = qty * price
 
             trades.append({
-                "month": m,
-                "day": d,
-                "type": trade_type,
-                "stock": stock,
-                "qty": qty,
-                "price": price,
-                "net": final_net
-            })
+                            "month": m,
+                            "day": d,
+                            "type": trade_type,
+                            "stock": stock,
+                            "qty": qty,
+                            "price": price,
+                        
+                            "net": final_net,
+                        
+                            "amount": amount,
+                            "cash_amount": cash_amount,
+                            "settle_amount": settle_amount,
+                        
+                            "fee": fee,
+                            "tax": tax
+                        })
 
         except:
             continue
