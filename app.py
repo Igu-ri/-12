@@ -212,16 +212,11 @@ def parse_hantoo_sheet(df):
             
             # 은행/예탁금/이체 계열
             if "입금" in trade_type or "출금" in trade_type or "예탁금" in trade_type:
-                final_net = net or amount
+                final_net = net
             
             # 증권 거래 (매수/매도)
             elif qty and price:
-                final_net = qty * price - fee - tax
-            
-            # fallback
-            else:
-                final_net = net or amount or 0
-                
+                final_net = qty * price
 
             trades.append({
                 "month": m,
