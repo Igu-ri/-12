@@ -102,21 +102,44 @@ def parse_hantoo_sheet(df):
     # ─────────────────────────────
     # 🔥 멀티 헤더 처리 (2~3줄)
     # ─────────────────────────────
-    header_rows = df.iloc[header_row:header_row+3].fillna("")
+   # ─────────────────────────────
+# 🔥 헤더 줄 수 자동 감지
+# ─────────────────────────────
+header_rows = []
 
-    new_cols = []
-    for col in range(df.shape[1]):
-        parts = []
-        for row_i in range(len(header_rows)):
-            val = str(header_rows.iloc[row_i, col]).strip()
-            if val and val != "nan":
-                parts.append(val)
-        new_cols.append("_".join(parts))
+for i in range(header_row, min(header_row + 5, len(df))):
+    row_values = df.iloc[i].astype(str)
 
-    df.columns = new_cols
+    # 숫자 많으면 데이터 시작으로 판단
+    num_count = sum(v.replace('.', '', 1).isdigit() for v in row_values)
 
-    # 실제 데이터 시작
-    df = df.iloc[header_row + len(header_rows):].reset_index(drop=True)
+    if num_count >= 3:
+        break
+
+    header_rows.append(df.iloc[i])
+
+header_rows = pd.DataFrame(header_rows).fillna("")
+
+# ─────────────────────────────
+# 🔥 멀티 헤더 합치기
+# ─────────────────────────────
+new_cols = []
+for col in range(df.shape[1]):
+    parts = []
+    for row_i in range(len(header_rows)):
+        val = str(header_rows.iloc[row_i, col]).strip()
+        if val and val != "nan":
+            parts.append(val)
+    new_cols.append("_".join(parts))
+
+df.columns = new_cols
+
+# 👉 여기 바로 아래 추가(디버깅용)
+st.write("컬럼 확인:", df.columns.tolist())
+st.write("헤더 줄 수:", len(header_rows))
+
+# 실제 데이터 시작
+df = df.iloc[header_row + len(header_rows):].reset_index(drop=True)
 
     # ─────────────────────────────
     # 컬럼 찾기
