@@ -206,13 +206,22 @@ def parse_hantoo_sheet(df):
             fee    = to_int(r.get(c_fee))
             tax    = to_int(r.get(c_tax))
 
-            # 🔥 금액 계산 로직
-            if amount:
-                final_net = amount
-            elif net:
-                final_net = net
+            # ─────────────────────────────
+            # 💰 거래유형별 금액 처리
+            # ─────────────────────────────
+            
+            # 은행/예탁금/이체 계열
+            if "입금" in trade_type or "출금" in trade_type or "예탁금" in trade_type:
+                final_net = net or amount
+            
+            # 증권 거래 (매수/매도)
+            elif qty and price:
+                final_net = qty * price - fee - tax
+            
+            # fallback
             else:
-                final_net = (qty * price) - fee - tax
+                final_net = net or amount or 0
+                
 
             trades.append({
                 "month": m,
