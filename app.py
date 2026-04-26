@@ -2,14 +2,14 @@ import streamlit as st
 import pandas as pd
 import openpyxl
 import io, tempfile, re
-from openpyxl.styles import PatternFill # 엑셀 헤더 노란색으로 칠하기
+from openpyxl.styles import PatternFill
 
 st.set_page_config(page_title="더존 전표 변환기", page_icon="📊", layout="wide")
 st.title("📊 더존 위하고 전표 변환기")
 
 
 # ─────────────────────────────
-# 숫자 변환
+# 기본 유틸
 # ─────────────────────────────
 def to_int(v):
     try:
@@ -39,9 +39,10 @@ def parse_date(v):
         return d.month, d.day
     except:
         return None, None
-        
+
+
 # ─────────────────────────────
-# 🔥 거래유형 정규화 (핵심 추가)
+# 거래유형
 # ─────────────────────────────
 def normalize_trade_type(ttype):
     ttype = str(ttype)
@@ -50,23 +51,20 @@ def normalize_trade_type(ttype):
         return "SELL"
     elif "매수" in ttype:
         return "BUY"
-    elif "예탁금" in ttype or "예탁금이용료" in ttype:
+    elif "예탁금" in ttype:
         return "INTEREST"
-    elif "입고" in ttype or "공모주입고" in ttype:
+    elif "입고" in ttype:
         return "StockCredit"
-    elif "입금" in ttype or "이체입금" in ttype:
+    elif "입금" in ttype:
         return "Credit"
-    elif "출금" in ttype and (
-                              "은행이체" in ttype or
-                              "타사이체" in ttype or
-                              "이체출금" in ttype
-                             ):
+    elif "출금" in ttype:
         return "Debit"
-        
+
     return None
 
+
 # ─────────────────────────────
-# row (엑셀 10컬럼 기준)
+# row
 # ─────────────────────────────
 def row(m, d, div, acct_code, acct_name, cp_code, cp_name, memo, dr, cr):
     return [
@@ -82,15 +80,13 @@ def row(m, d, div, acct_code, acct_name, cp_code, cp_name, memo, dr, cr):
 
 
 # ─────────────────────────────
-# HANTOO 파서 (자동 컬럼 매칭)
+# 파서
 # ─────────────────────────────
 def parse_hantoo_sheet(df):
 
     header_row = None
 
-    # ─────────────────────────────
-    # 1️⃣ 헤더 위치 찾기
-    # ─────────────────────────────
+    # 1️⃣ 헤더 찾기
     for i in range(min(15, len(df))):
         row_str = df.iloc[i].astype(str)
         if any("거래일" in str(v) for v in row_str):
@@ -98,12 +94,9 @@ def parse_hantoo_sheet(df):
             break
 
     if header_row is None:
-        st.error("헤더 못 찾음")
         return []
 
-    # ─────────────────────────────
-    # 2️⃣ 단일 헤더 먼저 시도
-    # ─────────────────────────────
+    # 2️⃣ 단일 헤더 우선
     try:
         df_single = df.copy()
         df_single.columns = df_single.iloc[header_row]
@@ -111,18 +104,15 @@ def parse_hantoo_sheet(df):
 
         cols = [str(c) for c in df_single.columns]
 
-        # 핵심 컬럼 존재 여부 체크
         if any("거래일" in c for c in cols) and any("종목" in c for c in cols):
             df = df_single
-            st.write("✅ 단일 헤더 사용")
+            st.write("✅ 단일 헤더")
 
         else:
-            raise Exception("단일 헤더 실패")
+            raise Exception()
 
     except:
-        # ─────────────────────────────
-        # 3️⃣ 멀티 헤더 fallback
-        # ─────────────────────────────
+        # 3️⃣ 멀티 헤더
         header_rows = []
 
         for i in range(header_row, min(header_row + 5, len(df))):
@@ -134,7 +124,6 @@ def parse_hantoo_sheet(df):
                 if pd.notna(v)
             ) / len(row_values)
 
-            # 데이터 시작 감지
             if numeric_ratio > 0.5:
                 break
 
@@ -155,11 +144,8 @@ def parse_hantoo_sheet(df):
         df.columns = new_cols
         df = df.iloc[header_row + len(header_rows):].reset_index(drop=True)
 
-        st.write("🔁 멀티 헤더 사용")
+        st.write("🔁 멀티 헤더")
 
-    # ─────────────────────────────
-    # 🔍 디버깅
-    # ─────────────────────────────
     st.write("컬럼:", df.columns.tolist())
 
     # ─────────────────────────────
@@ -172,69 +158,61 @@ def parse_hantoo_sheet(df):
                     return c
         return None
 
-    c_date   = find_col(["거래일","거래일자","일자","날짜"])
-    c_type   = find_col(["구분","적요명","내용","거래종류","거래명"])
-    c_stock  = find_col(["종목","종목명"])
-    c_qty    = find_col(["수량","거래수량"])
-    c_price  = find_col(["단가","거래단가","가격"])
+    c_date = find_col(["거래일","일자","날짜"])
+    c_type = find_col(["구분","적요","내용"])
+    c_stock = find_col(["종목"])
+    c_qty = find_col(["수량"])
+    c_price = find_col(["단가"])
 
-    # 🔥 금액 계열 분리
-    c_amount = find_col(["정산금액"])
-    c_net    = find_col(["입출금액","거래금액","금액"])
-    c_fee    = find_col(["수수료"])
-    c_tax    = find_col(["제세금","세금"])
+    c_amount = find_col(["정산금액","금액","거래금액","입출금액"])
+    c_fee = find_col(["수수료"])
+    c_tax = find_col(["세금","제세금"])
 
     trades = []
 
+    # ─────────────────────────────
+    # 데이터 생성
+    # ─────────────────────────────
     for _, r in df.iterrows():
         try:
             m, d = parse_date(r.get(c_date))
             if not m:
                 continue
 
-            trade_type = clean(r.get(c_type))
-            if not trade_type:
+            ttype_raw = clean(r.get(c_type))
+            ttype = normalize_trade_type(ttype_raw)
+
+            if not ttype:
                 continue
 
             stock = clean(r.get(c_stock))
 
-            qty   = to_int(r.get(c_qty))
+            qty = to_int(r.get(c_qty))
             price = to_int(r.get(c_price))
 
             amount = to_int(r.get(c_amount))
-            net    = to_int(r.get(c_net))
-            fee    = to_int(r.get(c_fee))
-            tax    = to_int(r.get(c_tax))
+            fee = to_int(r.get(c_fee))
+            tax = to_int(r.get(c_tax))
 
-            # ─────────────────────────────
-            # 💰 거래유형별 금액 처리
-            # ─────────────────────────────
-            
-            # 은행/예탁금/이체 계열
-            if "입금" in trade_type or "출금" in trade_type or "예탁금" in trade_type:
-                final_net = net
-            
-            # 증권 거래 (매수/매도)
+            # 🔥 금액 통일
+            if amount:
+                final_amount = amount
             elif qty and price:
-                final_net = qty * price
+                final_amount = qty * price
+            else:
+                final_amount = 0
 
             trades.append({
-                            "month": m,
-                            "day": d,
-                            "type": trade_type,
-                            "stock": stock,
-                            "qty": qty,
-                            "price": price,
-                        
-                            "net": final_net,
-                        
-                            "amount": amount,
-                            "cash_amount": cash_amount,
-                            "settle_amount": settle_amount,
-                        
-                            "fee": fee,
-                            "tax": tax
-                        })
+                "month": m,
+                "day": d,
+                "type": ttype,
+                "stock": stock,
+                "qty": qty,
+                "price": price,
+                "amount": final_amount,
+                "fee": fee,
+                "tax": tax
+            })
 
         except:
             continue
@@ -255,107 +233,59 @@ def process_trades(trades):
         stock = t["stock"]
         qty = t["qty"]
         price = t["price"]
+        amount = t["amount"]
 
-        fee = t["fee"]
-        tax = t["tax"]
+        ttype = t["type"]
 
-        ttype = normalize_trade_type(t["type"])
-        if not ttype:
-            continue
-
-        # ─────────────────────────────
-        # 🔥 금액 결정 (핵심)
-        # ─────────────────────────────
-        if ttype in ["BUY", "SELL"]:
-            amount = t["net"]          # 거래금액
-
-        elif ttype in ["Credit", "Debit"]:
-            amount = t["cash_amount"]  # 입출금액
-
-        elif ttype == "INTEREST":
-            amount = t["settle_amount"] # 정산금액
-
-        else:
-            amount = t["net"] or t["settle_amount"] or 0
-
-        # ─────────────────────────────
-        # 전표 생성
-        # ─────────────────────────────
-
-        # 매도
         if ttype == "SELL":
-            memo = f"{stock}({qty}주*{price})매도"
-
+            memo = f"{stock} 매도"
             rows.append(row(m,d,"차변",12500,"예치금","","",memo,amount,0))
-            rows.append(row(m,d,"대변",10700,"단기매매증권","",stock,memo,0,qty*price))
+            rows.append(row(m,d,"대변",10700,"단기매매증권","",stock,memo,0,amount))
 
-        # 매수
         elif ttype == "BUY":
-            cost = qty * price
-            memo = f"{stock}({qty}주*{price})매수"
+            memo = f"{stock} 매수"
+            rows.append(row(m,d,"차변",10700,"단기매매증권","",stock,memo,amount,0))
+            rows.append(row(m,d,"대변",12500,"예치금","","",memo,0,amount))
 
-            rows.append(row(m,d,"차변",10700,"단기매매증권","",stock,memo,cost,0))
-            rows.append(row(m,d,"대변",12500,"예치금","","",memo,0,cost))
-
-        # 예탁금이용료
         elif ttype == "INTEREST":
             memo = "예탁금이용료"
-
             rows.append(row(m,d,"차변",12500,"예치금","","",memo,amount,0))
-            rows.append(row(m,d,"대변",42000,"이자수익(금융)","",stock,memo,0,amount))
+            rows.append(row(m,d,"대변",42000,"이자수익","",stock,memo,0,amount))
 
-        # 공모주입고
         elif ttype == "StockCredit":
-            cost = qty * price
-            memo = f"{stock}({qty}주*{price})입고"
+            memo = f"{stock} 입고"
+            rows.append(row(m,d,"차변",10700,"단기매매증권","",stock,memo,amount,0))
+            rows.append(row(m,d,"대변",13100,"선급금","",stock,memo,0,amount))
 
-            rows.append(row(m,d,"차변",10700,"단기매매증권","",stock,memo,cost,0))
-            rows.append(row(m,d,"대변",13100,"선급금","",stock,memo,0,cost))
-
-        # 이체입금
         elif ttype == "Credit":
-            memo = "이체입금"
-
+            memo = "입금"
             rows.append(row(m,d,"차변",12500,"예치금","",stock,memo,amount,0))
-            rows.append(row(m,d,"대변",12500,"예치금","","미등록거래처",memo,0,amount))
+            rows.append(row(m,d,"대변",12500,"예치금","","미등록",memo,0,amount))
 
-        # 이체출금
         elif ttype == "Debit":
-            memo = "이체출금"
-
-            rows.append(row(m,d,"차변",12500,"예치금","","미등록거래처",memo,0,amount))
+            memo = "출금"
+            rows.append(row(m,d,"차변",12500,"예치금","","미등록",memo,0,amount))
             rows.append(row(m,d,"대변",12500,"예치금","",stock,memo,amount,0))
 
     return rows
 
+
 # ─────────────────────────────
-# Excel 생성
+# 엑셀 생성
 # ─────────────────────────────
 def create_excel(rows):
     wb = openpyxl.Workbook()
     ws = wb.active
 
     header = [
-        "1.월","2.일","3.구분",
-        "4.계정과목코드","5.계정과목명",
-        "6.거래처코드","7.거래처명",
-        "8.적요명","9.차변(출금)","10.대변(입금)"
+        "월","일","구분",
+        "계정코드","계정명",
+        "거래처코드","거래처명",
+        "적요","차변","대변"
     ]
 
     ws.append(header)
 
-    # 🔥 노란색 스타일
-    yellow_fill = PatternFill(
-        start_color="FFF59D",  # 연노랑
-        end_color="FFF59D",
-        fill_type="solid"
-    )
-
-    # 헤더 스타일 적용
-    for col in range(1, len(header) + 1):
-        ws.cell(row=1, column=col).fill = yellow_fill
-
-    # 데이터 입력
     for r in rows:
         ws.append(r)
 
@@ -363,6 +293,7 @@ def create_excel(rows):
     wb.save(bio)
     bio.seek(0)
     return bio
+
 
 # ─────────────────────────────
 # UI
@@ -393,8 +324,4 @@ if uploaded:
             out = create_excel(rows)
 
             st.success("완료")
-            st.download_button(
-                "다운로드",
-                data=out,
-                file_name="result.xlsx"
-            )
+            st.download_button("다운로드", data=out, file_name="result.xlsx")
