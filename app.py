@@ -110,9 +110,12 @@ def parse_hantoo_sheet(df):
     c_type  = find_col(["구분","적요명","내용","거래종류","거래명"])
     c_stock = find_col(["종목","종목명","종목명(거래상대명)"])
     c_qty   = find_col(["수량","거래수량"])
-    c_price = find_col(["단가","가격"])
+    c_price = find_col(["단가","거래단가","가격"])
     c_net   = find_col(["금액","거래금액","입출금액"])
-
+    c_fee   = find_col(["수수료"])
+    c_tax   = find_col(["제세금","세금"])
+    c_amount = find_col(["정산금액"])
+    
     trades = []
 
     for _, r in df.iterrows():
