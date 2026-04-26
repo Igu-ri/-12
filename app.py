@@ -85,61 +85,53 @@ def row(m, d, div, acct_code, acct_name, cp_code, cp_name, memo, dr, cr):
 # HANTOO 파서 (자동 컬럼 매칭)
 # ─────────────────────────────
 def parse_hantoo_sheet(df):
+
     header_row = None
 
-    # ─────────────────────────────
-    # 헤더 위치 찾기
-    # ─────────────────────────────
+    # 1. 헤더 위치 찾기
     for i in range(min(15, len(df))):
         row_str = df.iloc[i].astype(str)
-        if any("거래일" in str(v or "") for v in row_str):
+        if any("거래일" in str(v) for v in row_str):
             header_row = i
             break
 
     if header_row is None:
+        st.error("헤더 못 찾음")
         return []
 
-    # ─────────────────────────────
-    # 🔥 멀티 헤더 처리 (2~3줄)
-    # ─────────────────────────────
-   # ─────────────────────────────
-# 🔥 헤더 줄 수 자동 감지
-# ─────────────────────────────
-header_rows = []
+    # 2. 헤더 줄 자동 감지
+    header_rows = []
 
-for i in range(header_row, min(header_row + 5, len(df))):
-    row_values = df.iloc[i].astype(str)
+    for i in range(header_row, min(header_row + 5, len(df))):
+        row_values = df.iloc[i].astype(str)
 
-    # 숫자 많으면 데이터 시작으로 판단
-    num_count = sum(v.replace('.', '', 1).isdigit() for v in row_values)
+        num_count = sum(v.replace('.', '', 1).isdigit() for v in row_values)
 
-    if num_count >= 3:
-        break
+        if num_count >= 3:
+            break
 
-    header_rows.append(df.iloc[i])
+        header_rows.append(df.iloc[i])
 
-header_rows = pd.DataFrame(header_rows).fillna("")
+    header_rows = pd.DataFrame(header_rows).fillna("")
 
-# ─────────────────────────────
-# 🔥 멀티 헤더 합치기
-# ─────────────────────────────
-new_cols = []
-for col in range(df.shape[1]):
-    parts = []
-    for row_i in range(len(header_rows)):
-        val = str(header_rows.iloc[row_i, col]).strip()
-        if val and val != "nan":
-            parts.append(val)
-    new_cols.append("_".join(parts))
+    # 3. 멀티 헤더 합치기
+    new_cols = []
+    for col in range(df.shape[1]):
+        parts = []
+        for r in range(len(header_rows)):
+            val = str(header_rows.iloc[r, col]).strip()
+            if val and val != "nan":
+                parts.append(val)
+        new_cols.append("_".join(parts))
 
-df.columns = new_cols
+    df.columns = new_cols
 
-# 👉 여기 바로 아래 추가(디버깅용)
-st.write("컬럼 확인:", df.columns.tolist())
-st.write("헤더 줄 수:", len(header_rows))
+    # 🔍 디버깅
+    st.write("컬럼:", df.columns.tolist())
+    st.write("헤더 줄 수:", len(header_rows))
 
-# 실제 데이터 시작
-df = df.iloc[header_row + len(header_rows):].reset_index(drop=True)
+    # 4. 데이터 시작
+    df = df.iloc[header_row + len(header_rows):].reset_index(drop=True)
 
     # ─────────────────────────────
     # 컬럼 찾기
