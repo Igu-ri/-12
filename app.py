@@ -88,7 +88,9 @@ def parse_hantoo_sheet(df):
 
     header_row = None
 
-    # 1. 헤더 위치 찾기
+    # ─────────────────────────────
+    # 1️⃣ 헤더 위치 찾기
+    # ─────────────────────────────
     for i in range(min(15, len(df))):
         row_str = df.iloc[i].astype(str)
         if any("거래일" in str(v) for v in row_str):
@@ -99,39 +101,66 @@ def parse_hantoo_sheet(df):
         st.error("헤더 못 찾음")
         return []
 
-    # 2. 헤더 줄 자동 감지
-    header_rows = []
+    # ─────────────────────────────
+    # 2️⃣ 단일 헤더 먼저 시도
+    # ─────────────────────────────
+    try:
+        df_single = df.copy()
+        df_single.columns = df_single.iloc[header_row]
+        df_single = df_single.iloc[header_row + 1:].reset_index(drop=True)
 
-    for i in range(header_row, min(header_row + 5, len(df))):
-        row_values = df.iloc[i].astype(str)
+        cols = [str(c) for c in df_single.columns]
 
-        num_count = sum(v.replace('.', '', 1).isdigit() for v in row_values)
+        # 핵심 컬럼 존재 여부 체크
+        if any("거래일" in c for c in cols) and any("종목" in c for c in cols):
+            df = df_single
+            st.write("✅ 단일 헤더 사용")
 
-        if num_count >= 3:
-            break
+        else:
+            raise Exception("단일 헤더 실패")
 
-        header_rows.append(df.iloc[i])
+    except:
+        # ─────────────────────────────
+        # 3️⃣ 멀티 헤더 fallback
+        # ─────────────────────────────
+        header_rows = []
 
-    header_rows = pd.DataFrame(header_rows).fillna("")
+        for i in range(header_row, min(header_row + 5, len(df))):
+            row_values = df.iloc[i].astype(str)
 
-    # 3. 멀티 헤더 합치기
-    new_cols = []
-    for col in range(df.shape[1]):
-        parts = []
-        for r in range(len(header_rows)):
-            val = str(header_rows.iloc[r, col]).strip()
-            if val and val != "nan":
-                parts.append(val)
-        new_cols.append("_".join(parts))
+            numeric_ratio = sum(
+                str(v).replace('.', '', 1).isdigit()
+                for v in row_values
+                if pd.notna(v)
+            ) / len(row_values)
 
-    df.columns = new_cols
+            # 데이터 시작 감지
+            if numeric_ratio > 0.5:
+                break
 
+            header_rows.append(df.iloc[i])
+
+        header_rows = pd.DataFrame(header_rows).fillna("")
+
+        new_cols = []
+        for col in range(df.shape[1]):
+            parts = []
+            for r in range(len(header_rows)):
+                val = str(header_rows.iloc[r, col]).strip()
+                if val and val != "nan":
+                    parts.append(val)
+
+            new_cols.append("_".join(parts))
+
+        df.columns = new_cols
+        df = df.iloc[header_row + len(header_rows):].reset_index(drop=True)
+
+        st.write("🔁 멀티 헤더 사용")
+
+    # ─────────────────────────────
     # 🔍 디버깅
+    # ─────────────────────────────
     st.write("컬럼:", df.columns.tolist())
-    st.write("헤더 줄 수:", len(header_rows))
-
-    # 4. 데이터 시작
-    df = df.iloc[header_row + len(header_rows):].reset_index(drop=True)
 
     # ─────────────────────────────
     # 컬럼 찾기
