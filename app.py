@@ -2,17 +2,18 @@ import streamlit as st
 import pandas as pd
 import openpyxl
 import io, tempfile, re
+from datetime import datetime
 from openpyxl.styles import PatternFill
 
-st.set_page_config(page_title="전표 변환기", layout="wide")
-st.title("📊 증권사 통합 전표 변환기")
+st.set_page_config(page_title="증권사 전표 변환기", layout="wide")
+st.title("📊 증권사 전표 통합 변환기")
 
 # ─────────────────────────────
 # 기본 유틸
 # ─────────────────────────────
 def to_int(v):
     try:
-        if pd.isna(v):
+        if v is None:
             return 0
         if isinstance(v, str):
             v = re.sub(r"[^0-9.-]", "", v)
@@ -20,13 +21,34 @@ def to_int(v):
     except:
         return 0
 
+
 def clean(v):
+    if v is None:
+        return ''
     try:
         if pd.isna(v):
-            return ""
-        return str(v).strip()
+            return ''
     except:
-        return ""
+        pass
+    return str(v).strip()
+
+
+# ─────────────────────────────
+# 날짜 판별 (핵심 보완)
+# ─────────────────────────────
+def is_date(val):
+    if val is None:
+        return False
+
+    if isinstance(val, (pd.Timestamp, datetime)):
+        return True
+
+    s = str(val).strip()
+    if s in ("", "nan", "NaT"):
+        return False
+
+    return bool(re.search(r"\d{4}\D\d{1,2}\D\d{1,2}", s))
+
 
 def parse_date(v):
     try:
@@ -35,58 +57,48 @@ def parse_date(v):
     except:
         return None, None
 
-# ─────────────────────────────
-# 🔥 거래유형 통합 정규화
-# ─────────────────────────────
-def normalize_trade_type(v):
-    v = str(v)
 
-    if "매도" in v:
+# ─────────────────────────────
+# 거래유형
+# ─────────────────────────────
+def normalize_trade_type(ttype):
+    ttype = str(ttype)
+
+    if "매도" in ttype:
         return "SELL"
-    if "매수" in v:
+    elif "매수" in ttype:
         return "BUY"
-    if "예탁금" in v:
+    elif "예탁금" in ttype or "이용료" in ttype:
         return "INTEREST"
-    if "입고" in v or "공모주" in v:
+    elif "입고" in ttype:
         return "StockCredit"
-    if "입금" in v:
+    elif "입금" in ttype:
         return "Credit"
-    if "출금" in v:
+    elif "출금" in ttype:
         return "Debit"
 
     return None
 
-# ─────────────────────────────
-# 종목명 normalize (핵심)
-# ─────────────────────────────
-def extract_stock_name(v):
-    v = str(v).replace(" ", "").strip()
-    if "#" in v:
-        return v.split("#")[-1]
-    return v
 
 # ─────────────────────────────
-# 거래처 매핑
+# row 생성
 # ─────────────────────────────
-def load_broker_map(file):
-    if file is None:
-        return {}
+def row(m, d, div, acct_code, acct_name, cp_code, cp_name, memo, dr, cr):
+    return [m, d, div, acct_code, acct_name, cp_code, cp_name, memo, dr, cr]
 
-    df = pd.read_excel(file)
-
-    mp = {}
-    for code, name in zip(df.iloc[:,0], df.iloc[:,1]):
-        key = extract_stock_name(name)
-        mp[key] = (str(code).strip(), str(name).strip())
-
-    return mp
-
-def get_broker_info(stock, broker_map):
-    key = extract_stock_name(stock)
-    return broker_map.get(key, ("", stock))
 
 # ─────────────────────────────
-# 컬럼 찾기 (안전)
+# 종목 정리
+# ─────────────────────────────
+def extract_stock_name(name):
+    name = str(name).replace(" ", "").strip()
+    if "#" in name:
+        return name.split("#")[-1]
+    return name
+
+
+# ─────────────────────────────
+# 엑셀 컬럼 찾기 (완전 유연)
 # ─────────────────────────────
 def find_col(df, keys):
     for c in df.columns:
@@ -95,101 +107,134 @@ def find_col(df, keys):
                 return c
     return None
 
-# ─────────────────────────────
-# 🔥 핵심: 증권사 통합 파서
-# ─────────────────────────────
-def parse_trades(df):
-    trades = []
 
-    header = None
-    for i in range(min(20, len(df))):
+# ─────────────────────────────
+# 핵심 통합 파서 (증권사 공용)
+# ─────────────────────────────
+def parse_sheet(df):
+
+    header_row = None
+
+    # 1️⃣ 날짜 포함 행 찾기 (전체 행 검사)
+    for i in range(len(df)):
         row = df.iloc[i].astype(str)
-        if any("거래일" in x for x in row):
-            header = i
+        if any(is_date(v) for v in row):
+            header_row = i
             break
 
-    if header is None:
+    if header_row is None:
         return []
 
-    df.columns = df.iloc[header]
-    df = df.iloc[header+1:].reset_index(drop=True)
+    df.columns = df.iloc[header_row]
+    df = df.iloc[header_row + 1:].reset_index(drop=True)
 
-    c_date  = find_col(df, ["거래일"])
-    c_type  = find_col(df, ["구분","적요","거래종류","내용"])
-    c_stock = find_col(df, ["종목"])
-    c_qty   = find_col(df, ["수량"])
-    c_price = find_col(df, ["단가"])
-    c_net   = find_col(df, ["금액","거래대금"])
+    # 2️⃣ 컬럼 자동 매칭
+    c_date  = find_col(df, ["거래일", "거래일자", "일자", "날짜"])
+    c_type  = find_col(df, ["구분", "적요", "내용", "거래종류"])
+    c_stock = find_col(df, ["종목", "종목명"])
+    c_qty   = find_col(df, ["수량", "거래수량", "거래좌수"])
+    c_price = find_col(df, ["단가", "가격", "기준가"])
+    c_net   = find_col(df, ["금액", "거래금액", "거래대금"])
+    c_fee   = find_col(df, ["수수료"])
+    c_tax   = find_col(df, ["세금", "제세금"])
 
-    for i in range(len(df)):
+    trades = []
+
+    i = 0
+    while i < len(df):
+
         try:
-            r = df.iloc[i]
+            r1 = df.iloc[i]
 
-            m,d = parse_date(r.get(c_date))
-            if not m:
+            # 날짜 아니면 skip
+            if not is_date(r1.get(c_date)):
+                i += 1
                 continue
 
-            ttype = clean(r.get(c_type))
-            stock = clean(r.get(c_stock))
-            qty   = to_int(r.get(c_qty))
-            price = to_int(r.get(c_price))
-            net   = to_int(r.get(c_net))
+            # 짝꿍행 체크 (다음 행이 상세일 가능성)
+            r2 = df.iloc[i + 1] if i + 1 < len(df) else None
+            if r2 is not None and is_date(r2.get(c_date)):
+                r2 = None  # 날짜면 같은 거래 아님
+
+            def get(col):
+                if col is None:
+                    return None
+                if r2 is not None:
+                    return r2.get(col)
+                return r1.get(col)
+
+            m, d = parse_date(r1.get(c_date))
+
+            trade_type = clean(get(c_type))
+            stock = clean(get(c_stock))
 
             trades.append({
-                "m":m,"d":d,
-                "type":ttype,
-                "stock":stock,
-                "qty":qty,
-                "price":price,
-                "net":net
+                "month": m,
+                "day": d,
+                "type": trade_type,
+                "stock": stock,
+                "qty": to_int(get(c_qty)),
+                "price": to_int(get(c_price)),
+                "net": to_int(get(c_net)),
+                "fee": to_int(get(c_fee)),
+                "tax": to_int(get(c_tax)),
             })
 
+            i += 2 if r2 is not None else 1
+
         except:
-            continue
+            i += 1
 
     return trades
+
 
 # ─────────────────────────────
 # 전표 생성
 # ─────────────────────────────
-def process(trades, broker_map, broker_code):
+def process(trades, broker_code):
+
     rows = []
 
     for t in trades:
 
+        m = t["month"]
+        d = t["day"]
         ttype = normalize_trade_type(t["type"])
+
         if not ttype:
             continue
 
-        m,d = t["m"],t["d"]
         stock = extract_stock_name(t["stock"])
         qty = t["qty"]
         price = t["price"]
         net = t["net"]
-
-        cp_code, cp_name = get_broker_info(stock, broker_map)
-
-        memo = f"{stock}"
+        fee = t["fee"]
 
         if ttype == "SELL":
-            rows.append([m,d,"차변",12500,"예치금",broker_code,"",memo,net,0])
-            rows.append([m,d,"대변",10700,"주식",cp_code,cp_name,memo,0,qty*price])
+            memo = f"{stock} 매도"
+            rows.append(row(m,d,"차변",12500,"예치금",broker_code,"",memo,net,0))
+            rows.append(row(m,d,"대변",10700,"증권",broker_code,stock,memo,0,qty*price))
 
         elif ttype == "BUY":
             cost = qty * price
-            rows.append([m,d,"차변",10700,"주식",cp_code,cp_name,memo,cost,0])
-            rows.append([m,d,"대변",12500,"예치금",broker_code,"",memo,0,cost])
+            memo = f"{stock} 매수"
+
+            rows.append(row(m,d,"차변",10700,"증권",broker_code,stock,memo,cost,0))
+            rows.append(row(m,d,"대변",12500,"예치금",broker_code,"",memo,0,cost+fee))
 
         elif ttype == "INTEREST":
-            rows.append([m,d,"차변",12500,"예치금",broker_code,"",memo,net,0])
-            rows.append([m,d,"대변",42000,"이자수익","", "",memo,0,net])
+            memo = "이자"
+            rows.append(row(m,d,"차변",12500,"예치금",broker_code,"",memo,net,0))
+            rows.append(row(m,d,"대변",42000,"이자수익",broker_code,"",memo,0,net))
 
     return rows
 
+
 # ─────────────────────────────
-# Excel 출력
+# 엑셀 생성
 # ─────────────────────────────
-def to_excel(rows):
+def make_excel(rows):
+
     wb = openpyxl.Workbook()
     ws = wb.active
 
@@ -204,33 +249,37 @@ def to_excel(rows):
     bio.seek(0)
     return bio
 
+
 # ─────────────────────────────
 # UI
 # ─────────────────────────────
-broker_file = st.file_uploader("거래처 매핑", type=["xlsx"])
 broker_code = st.text_input("증권사 코드")
-uploaded = st.file_uploader("엑셀 업로드", type=["xlsx"])
+file = st.file_uploader("엑셀 업로드")
 
-if uploaded:
-    if st.button("변환"):
+if file and st.button("변환"):
 
-        broker_map = load_broker_map(broker_file)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
+    tmp.write(file.read())
+    tmp.close()
 
-        tmp = tempfile.NamedTemporaryFile(delete=False)
-        tmp.write(uploaded.read())
-        tmp.close()
+    xl = pd.ExcelFile(tmp.name)
 
-        xl = pd.ExcelFile(tmp.name)
+    all_trades = []
 
-        all_trades = []
-        for sh in xl.sheet_names:
-            df = pd.read_excel(xl, sheet_name=sh, header=None)
-            all_trades += parse_trades(df)
+    for s in xl.sheet_names:
+        df = pd.read_excel(xl, sheet_name=s, header=None)
+        all_trades += parse_sheet(df)
 
-        rows = process(all_trades, broker_map, broker_code)
+    rows = process(all_trades, broker_code)
 
+    if not rows:
+        st.error("0건 (파싱 실패)")
+    else:
+        out = make_excel(rows)
         st.success(f"{len(rows)}건 변환 완료")
 
-        out = to_excel(rows)
-
-        st.download_button("다운로드", out, "result.xlsx")
+        st.download_button(
+            "다운로드",
+            data=out,
+            file_name="result.xlsx"
+        )
