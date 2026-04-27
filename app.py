@@ -8,13 +8,14 @@ st.set_page_config(page_title="더존 전표 변환기", page_icon="📊", layou
 st.title("📊 더존 위하고 전표 변환기")
 
 # ─────────────────────────────
-# 🔥 공통 유틸 (데이터 정리)
+# 🔥 기본 유틸 (절대 안정화 영역)
 # ─────────────────────────────
 
 def to_int(v):
-    """숫자만 추출해서 int 변환"""
     try:
         if v is None:
+            return 0
+        if pd.isna(v):
             return 0
         if isinstance(v, str):
             v = re.sub(r"[^0-9.-]", "", v)
@@ -24,17 +25,15 @@ def to_int(v):
 
 
 def clean(v):
-    """NaN / 공백 제거"""
     try:
         if pd.isna(v):
-            return ''
+            return ""
     except:
         pass
-    return str(v).strip() if v is not None else ''
+    return str(v).strip() if v is not None else ""
 
 
 def parse_date(v):
-    """월/일 추출"""
     try:
         d = pd.to_datetime(v)
         return d.month, d.day
@@ -43,73 +42,58 @@ def parse_date(v):
 
 
 # ─────────────────────────────
-# 🔥 거래유형 표준화 (핵심)
+# 🔥 거래유형 통합 (증권사 공통)
 # ─────────────────────────────
 def normalize_trade_type(ttype):
     ttype = str(ttype)
 
     if "매도" in ttype:
         return "SELL"
-    elif "매수" in ttype:
+    if "매수" in ttype:
         return "BUY"
-    elif "예탁금" in ttype:
+    if "예탁금" in ttype:
         return "INTEREST"
-    elif "입고" in ttype:
+    if "입고" in ttype:
         return "StockCredit"
-    elif "입금" in ttype:
+    if "입금" in ttype:
         return "Credit"
-    elif "출금" in ttype and ("이체" in ttype or "은행" in ttype):
+    if "출금" in ttype and ("이체" in ttype or "은행" in ttype):
         return "Debit"
 
     return None
 
 
 # ─────────────────────────────
-# 🔥 종목명 정리 (핵심 업그레이드)
+# 🔥 종목명 표준화 (#코스닥#메쥬 → 메쥬)
 # ─────────────────────────────
 def extract_stock_name(name):
-    """
-    예:
-    코스닥#메쥬 → 메쥬
-    코스피#삼성전자 → 삼성전자
-    """
     name = str(name).replace(" ", "").strip()
     return name.split("#")[-1] if "#" in name else name
 
 
 # ─────────────────────────────
-# 🔥 거래처 매핑 (기존 유지 + 강화)
+# 🔥 거래처 매핑 (기존 유지)
 # ─────────────────────────────
 def load_broker_map(file):
-    """
-    거래처 매핑 엑셀:
-    A열 = 코드
-    B열 = 이름
-    """
     if file is None:
         return {}
 
     df = pd.read_excel(file)
 
-    mapping = {}
+    mp = {}
     for code, name in zip(df.iloc[:, 0], df.iloc[:, 1]):
-        key = extract_stock_name(name)  # 🔥 종목명 기준 통일
-        mapping[key] = (str(code).strip(), str(name).strip())
+        mp[extract_stock_name(name)] = (str(code), str(name))
 
-    return mapping
+    return mp
 
 
 def get_broker_info(stock, broker_map):
     key = extract_stock_name(stock)
-
-    if key in broker_map:
-        return broker_map[key]
-
-    return "", stock  # 미매핑
+    return broker_map.get(key, ("", stock))
 
 
 # ─────────────────────────────
-# 🔥 엑셀 컬럼 자동 탐지
+# 🔥 컬럼 찾기
 # ─────────────────────────────
 def find_col(df, keys):
     for c in df.columns:
@@ -120,15 +104,16 @@ def find_col(df, keys):
 
 
 # ─────────────────────────────
-# 🔥 한투/증권사 공통 파서 (핵심)
+# 🔥 증권사 공통 파서 (핵심 안정화)
 # ─────────────────────────────
 def parse_trades(df):
     header_row = None
 
-    # 1️⃣ 헤더 찾기 (멀티 헤더 대응)
     for i in range(min(15, len(df))):
         row = df.iloc[i].astype(str)
-        if any("거래일" in v for v in row):
+
+        # 🔥 핵심 수정 (NaN 방어)
+        if any("거래일" in str(v or "") for v in row.values):
             header_row = i
             break
 
@@ -174,7 +159,7 @@ def parse_trades(df):
 
 
 # ─────────────────────────────
-# 🔥 전표 생성 (핵심 로직)
+# 🔥 전표 생성
 # ─────────────────────────────
 def process_trades(trades, broker_map, broker_code):
     rows = []
@@ -183,7 +168,6 @@ def process_trades(trades, broker_map, broker_code):
 
         m, d = t["month"], t["day"]
 
-        # 🔥 핵심: 거래 타입 표준화
         ttype = normalize_trade_type(t["type"])
         if not ttype:
             continue
@@ -196,41 +180,35 @@ def process_trades(trades, broker_map, broker_code):
 
         cp_code, cp_name = get_broker_info(stock, broker_map)
 
-        # ───────────── SELL ─────────────
+        # ───── SELL ─────
         if ttype == "SELL":
-            memo = f"{stock} 매도"
+            rows.append([m,d,"차변",12500,"예치금",broker_code,"",stock,net,0])
+            rows.append([m,d,"대변",10700,"증권",cp_code,cp_name,stock,0,qty*price])
 
-            rows.append([m,d,"차변",12500,"예치금",broker_code,"",memo,net,0])
-            rows.append([m,d,"대변",10700,"증권",cp_code,cp_name,memo,0,qty*price])
-
-        # ───────────── BUY ─────────────
+        # ───── BUY ─────
         elif ttype == "BUY":
             cost = qty * price
-            memo = f"{stock} 매수"
-
-            rows.append([m,d,"차변",10700,"증권",cp_code,cp_name,memo,cost,0])
+            rows.append([m,d,"차변",10700,"증권",cp_code,cp_name,stock,cost,0])
             rows.append([m,d,"차변",82800,"수수료",cp_code,cp_name,"수수료",fee,0])
-            rows.append([m,d,"대변",12500,"예치금",broker_code,"",memo,0,cost-fee])
+            rows.append([m,d,"대변",12500,"예치금",broker_code,"",stock,0,cost-fee])
 
-        # ───────────── 이자 ─────────────
+        # ───── INTEREST ─────
         elif ttype == "INTEREST":
             rows.append([m,d,"차변",12500,"예치금",broker_code,"",t["type"],net,0])
-            rows.append([m,d,"대변",42000,"이자수익",broker_code,stock,t["type"],0,net])
+            rows.append([m,d,"대변",42000,"이자수익",broker_code,"",t["type"],0,net])
 
-        # ───────────── 입고 ─────────────
+        # ───── STOCK CREDIT ─────
         elif ttype == "StockCredit":
             cost = qty * price
-            memo = f"{stock} 입고"
+            rows.append([m,d,"차변",10700,"증권",cp_code,cp_name,stock,cost,0])
+            rows.append([m,d,"대변",13100,"선급금",cp_code,cp_name,stock,0,cost])
 
-            rows.append([m,d,"차변",10700,"증권",cp_code,cp_name,memo,cost,0])
-            rows.append([m,d,"대변",13100,"선급금",cp_code,cp_name,memo,0,cost])
-
-        # ───────────── 입금 ─────────────
+        # ───── CREDIT ─────
         elif ttype == "Credit":
             rows.append([m,d,"차변",12500,"예치금",broker_code,"",t["type"],net,0])
             rows.append([m,d,"대변",12500,"예치금","","미등록",t["type"],0,net])
 
-        # ───────────── 출금 ─────────────
+        # ───── DEBIT ─────
         elif ttype == "Debit":
             rows.append([m,d,"차변",12500,"예치금","","미등록",t["type"],0,net])
             rows.append([m,d,"대변",12500,"예치금",broker_code,"",t["type"],net,0])
@@ -246,10 +224,8 @@ def create_excel(rows):
     ws = wb.active
 
     headers = [
-        "월","일","구분",
-        "계정과목코드","계정과목명",
-        "거래처코드","거래처명",
-        "적요","차변","대변"
+        "월","일","구분","계정코드","계정명",
+        "거래처코드","거래처명","적요","차변","대변"
     ]
 
     ws.append(headers)
@@ -275,7 +251,7 @@ broker_file = st.file_uploader("거래처 매핑", type=["xlsx"])
 broker_code = st.text_input("증권사 코드")
 uploaded = st.file_uploader("엑셀 업로드", type=["xlsx"])
 
-if uploaded and st.button("변환"):
+if uploaded and st.button("변환 실행"):
 
     broker_map = load_broker_map(broker_file)
 
