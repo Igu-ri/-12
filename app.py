@@ -38,24 +38,63 @@ def parse_date(v):
         return None, None
 
 # ---------------------------
-# 헤더 병합
+# 🔥 안전 헤더 병합
 # ---------------------------
 def merge_headers(df, header_row, max_rows=3):
     parts = []
-    for i in range(header_row, header_row + max_rows):
+
+    max_row = min(len(df), header_row + max_rows)
+
+    for i in range(header_row, max_row):
         row = df.iloc[i].fillna("").astype(str)
         parts.append(row)
 
+    if not parts:
+        return df.columns
+
     merged = []
     for col in range(len(parts[0])):
-        vals = [parts[r][col].strip() for r in range(len(parts))]
+        vals = []
+        for r in parts:
+            if col < len(r):
+                vals.append(str(r[col]).strip())
+
         name = " ".join([v for v in vals if v])
-        merged.append(name)
+        merged.append(name if name else f"col_{col}")
 
     return merged
 
 # ---------------------------
-# 패턴 탐지
+# 🔥 안전 DF 준비
+# ---------------------------
+def prepare_df(df):
+
+    header_row = None
+    for i in range(min(15, len(df))):
+        row = df.iloc[i].astype(str)
+        if row.str.contains("거래|일자|종목").any():
+            header_row = i
+            break
+
+    if header_row is None:
+        header_row = 0
+
+    df.columns = merge_headers(df, header_row)
+
+    # 데이터 시작 찾기
+    start_row = header_row + 1
+    for i in range(header_row + 1, len(df)):
+        row = df.iloc[i]
+        if row.notna().sum() >= 3:
+            start_row = i
+            break
+
+    df = df.iloc[start_row:].reset_index(drop=True)
+
+    return df
+
+# ---------------------------
+# 🔥 패턴 탐지
 # ---------------------------
 def detect_column(df, check_fn, threshold=0.5):
     best_col, best_score = None, 0
@@ -106,73 +145,47 @@ def smart_find(df, keywords, fn=None):
     return df.columns[0]
 
 # ---------------------------
-# 거래처 매핑
+# 🔥 증권사 감지
 # ---------------------------
-def extract_stock_name(name):
-    name = str(name).replace(" ", "")
-    if "#" in name:
-        return name.split("#")[-1]
-    return name.strip()
+def detect_broker(df):
+    sample = df.astype(str).fillna("").head(10).to_string()
 
-def load_broker_map(file):
-    if file is None:
-        return {}
+    if "한국투자" in sample:
+        return "HANTOO"
+    if "키움" in sample:
+        return "KIWOOM"
+    if "삼성" in sample:
+        return "SAMSUNG"
+    if "미래에셋" in sample:
+        return "MIRAE"
 
-    df = pd.read_excel(file)
-
-    return {
-        extract_stock_name(name): (str(code).strip(), str(name).strip())
-        for code, name in zip(df.iloc[:,0], df.iloc[:,1])
-    }
-
-def get_broker_info(stock, broker_map):
-    key = extract_stock_name(stock)
-    return broker_map.get(key, ("", "미등록거래처"))
+    return "UNKNOWN"
 
 # ---------------------------
-# 거래유형
+# 🔥 파서들
 # ---------------------------
-def normalize_trade_type(t):
-    t = str(t)
-    if "매도" in t: return "SELL"
-    if "매수" in t: return "BUY"
-    if "공모" in t or "입고" in t: return "IPO"
-    if "배당" in t: return "DIVIDEND"
-    if "이자" in t or "예탁금" in t: return "INTEREST"
-    if "입금" in t: return "DEPOSIT"
-    if "출금" in t: return "WITHDRAW"
-    return None
+def parse_hantoo(df):
 
-# ---------------------------
-# 파서
-# ---------------------------
-def parse_sheet(df):
+    df = prepare_df(df)
 
-    header_row = None
-    for i in range(min(15, len(df))):
-        if df.iloc[i].astype(str).str.contains("거래").any():
-            header_row = i
-            break
+    def find(k):
+        for c in df.columns:
+            if k in str(c):
+                return c
+        return None
 
-    if header_row is None:
-        return []
-
-    df.columns = merge_headers(df, header_row)
-    df = df.iloc[header_row + 2:].reset_index(drop=True)
-
-    c_date  = smart_find(df, ["거래일","일자"], is_date)
-    c_type  = smart_find(df, ["거래","구분"], is_trade_type)
-    c_stock = smart_find(df, ["종목"])
-    c_qty   = smart_find(df, ["수량"], is_number)
-    c_price = smart_find(df, ["단가"], is_number)
-    c_net   = smart_find(df, ["금액"], is_number)
-    c_fee   = smart_find(df, ["수수료"], is_number)
-    c_tax   = smart_find(df, ["세금"], is_number)
+    c_date  = find("거래일")
+    c_type  = find("구분")
+    c_stock = find("종목")
+    c_qty   = find("수량")
+    c_price = find("단가")
+    c_net   = find("금액")
+    c_fee   = find("수수료")
 
     trades = []
 
     for _, r in df.iterrows():
-        m, d = parse_date(r.get(c_date))
+        m,d = parse_date(r.get(c_date))
         if not m:
             continue
 
@@ -185,10 +198,80 @@ def parse_sheet(df):
             "price": to_int(r.get(c_price)),
             "net": to_int(r.get(c_net)),
             "fee": to_int(r.get(c_fee)),
-            "tax": to_int(r.get(c_tax)),
+            "tax": 0
         })
 
     return trades
+
+def parse_generic(df):
+
+    df = prepare_df(df)
+
+    c_date  = smart_find(df, ["거래일","일자"], is_date)
+    c_type  = smart_find(df, ["거래","구분"], is_trade_type)
+    c_stock = smart_find(df, ["종목"])
+    c_qty   = smart_find(df, ["수량"], is_number)
+    c_price = smart_find(df, ["단가"], is_number)
+    c_net   = smart_find(df, ["금액"], is_number)
+
+    trades = []
+
+    for _, r in df.iterrows():
+        m,d = parse_date(r.get(c_date))
+        if not m:
+            continue
+
+        trades.append({
+            "month": m,
+            "day": d,
+            "type": clean(r.get(c_type)),
+            "stock": clean(r.get(c_stock)),
+            "qty": to_int(r.get(c_qty)),
+            "price": to_int(r.get(c_price)),
+            "net": to_int(r.get(c_net)),
+            "fee": 0,
+            "tax": 0
+        })
+
+    return trades
+
+# ---------------------------
+# 통합 파서
+# ---------------------------
+def parse_sheet(df):
+    broker = detect_broker(df)
+
+    if broker == "HANTOO":
+        return parse_hantoo(df)
+
+    return parse_generic(df)
+
+# ---------------------------
+# 거래처 매핑
+# ---------------------------
+def load_broker_map(file):
+    if file is None:
+        return {}
+
+    df = pd.read_excel(file)
+
+    return {
+        str(name).strip(): (str(code).strip(), str(name).strip())
+        for code, name in zip(df.iloc[:,0], df.iloc[:,1])
+    }
+
+def get_broker_info(stock, broker_map):
+    return broker_map.get(stock, ("", "미등록거래처"))
+
+# ---------------------------
+# 거래유형
+# ---------------------------
+def normalize_trade_type(t):
+    t = str(t)
+    if "매도" in t: return "SELL"
+    if "매수" in t: return "BUY"
+    if "배당" in t: return "DIVIDEND"
+    return None
 
 # ---------------------------
 # 전표 생성
@@ -204,29 +287,18 @@ def process_trades(trades, broker_map, broker_code, acc):
 
         m,d = t["month"], t["day"]
         qty, price = t["qty"], t["price"]
-        net, fee, tax = t["net"], t["fee"], t["tax"]
+        net = t["net"]
 
         stock = t["stock"]
-        stock_name = extract_stock_name(stock)
-
-        cp_code, cp_name = get_broker_info(stock_name, broker_map)
+        cp_code, cp_name = get_broker_info(stock, broker_map)
 
         if ttype == "BUY":
-            cost = qty * price
-
-            rows.append([m,d,"차변",acc["단기매매증권"],"단기매매증권",cp_code,cp_name,stock_name,cost,0])
-
-            if fee:
-                rows.append([m,d,"차변",acc["증권수수료"],"증권수수료",cp_code,cp_name,"수수료",fee,0])
-
-            if tax:
-                rows.append([m,d,"차변",acc["세금과공과"],"세금과공과",cp_code,cp_name,"세금",tax,0])
-
-            rows.append([m,d,"대변",acc["예치금"],"예치금",broker_code,"증권사",stock_name,0,net])
+            rows.append([m,d,"차변",acc["단기매매증권"],"단기매매증권",cp_code,cp_name,stock,qty*price,0])
+            rows.append([m,d,"대변",acc["예치금"],"예치금",broker_code,"증권사",stock,0,net])
 
         elif ttype == "SELL":
-            rows.append([m,d,"차변",acc["예치금"],"예치금",broker_code,"증권사",stock_name,net,0])
-            rows.append([m,d,"대변",acc["단기매매증권"],"단기매매증권",cp_code,cp_name,stock_name,0,qty*price])
+            rows.append([m,d,"차변",acc["예치금"],"예치금",broker_code,"증권사",stock,net,0])
+            rows.append([m,d,"대변",acc["단기매매증권"],"단기매매증권",cp_code,cp_name,stock,0,qty*price])
 
         elif ttype == "DIVIDEND":
             rows.append([m,d,"차변",acc["예치금"],"예치금",broker_code,"증권사","배당",net,0])
@@ -281,9 +353,7 @@ st.subheader("⚙️ 계정코드 설정")
 acc = {
     "예치금": int(st.text_input("예치금","12500")),
     "단기매매증권": int(st.text_input("단기매매증권","10700")),
-    "증권수수료": int(st.text_input("증권수수료","82800")),
-    "세금과공과": int(st.text_input("세금과공과","81700")),
-    "배당금수익": int(st.text_input("배당금수익","41800")),
+    "배당금수익": int(st.text_input("배당금수익","42100")),
 }
 
 broker_file = st.file_uploader("거래처 매핑")
@@ -307,7 +377,7 @@ if uploaded and st.button("변환 실행"):
     errors = validate_rows(rows)
 
     if errors:
-        st.error("오류 있음")
+        st.error("❌ 오류 있음")
         for e in errors:
             st.write(e)
     else:
